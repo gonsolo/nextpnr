@@ -217,9 +217,20 @@ struct Router2
     }
 
     dict<WireId, int> wire_to_idx;
+    std::vector<int> dense_to_idx; // wire_to_idx by the arch's dense wire index, when it has one
+
+    int widx(WireId w) const
+    {
+        if (!dense_to_idx.empty()) {
+            int i = dense_to_idx[ctx->getWireDenseIndex(w)];
+            NPNR_ASSERT(i >= 0);
+            return i;
+        }
+        return widx(w);
+    }
     std::vector<PerWireData> flat_wires;
 
-    PerWireData &wire_data(WireId w) { return flat_wires[wire_to_idx.at(w)]; }
+    PerWireData &wire_data(WireId w) { return flat_wires[widx(w)]; }
 
     void setup_wires()
     {
@@ -253,7 +264,13 @@ struct Router2
             pwd.x = (wire_loc.x0 + wire_loc.x1) / 2;
             pwd.y = (wire_loc.y0 + wire_loc.y1) / 2;
 
-            wire_to_idx[wire] = int(flat_wires.size());
+            if (ctx->getWireDenseCount() > 0) {
+                if (dense_to_idx.empty())
+                    dense_to_idx.assign(ctx->getWireDenseCount(), -1);
+                dense_to_idx[ctx->getWireDenseIndex(wire)] = int(flat_wires.size());
+            } else {
+                wire_to_idx[wire] = int(flat_wires.size());
+            }
             flat_wires.push_back(pwd);
         }
 
@@ -625,7 +642,7 @@ struct Router2
             PipId pip = nd.wires.at(cursor).first;
             if (pip == PipId())
                 break;
-            size_t wire_idx = wire_to_idx.at(cursor);
+            size_t wire_idx = widx(cursor);
             bind_pip_internal(nd, usr, wire_idx, pip);
             cursor = ctx->getPipSrcWire(pip);
         }
@@ -897,8 +914,8 @@ struct Router2
         if (dst_wire == WireId())
             ARC_LOG_ERR("No wire found for port %s on destination cell %s.\n", ctx->nameOf(usr.port),
                         ctx->nameOf(usr.cell));
-        int src_wire_idx = const_mode ? -1 : wire_to_idx.at(src_wire);
-        int dst_wire_idx = wire_to_idx.at(dst_wire);
+        int src_wire_idx = const_mode ? -1 : widx(src_wire);
+        int dst_wire_idx = widx(dst_wire);
         // Calculate a timing weight based on criticality
         float crit = get_arc_crit(net, i);
         float crit_weight = std::max<float>(0.05f, (1.0f - std::pow(crit, 2)));
@@ -939,7 +956,7 @@ struct Router2
                 WireScore base_score;
                 base_score.delay = 0;
                 base_score.cost = 0;
-                int wire_idx = wire_to_idx.at(wire);
+                int wire_idx = widx(wire);
                 base_score.togo_cost = get_togo_cost(net, i, wire_idx, dst_wire, false, crit_weight);
                 t.fwd_queue.push(QueuedWire(wire_idx, base_score));
                 set_visited_fwd(t, wire_idx, PipId(), 0.0);
@@ -971,7 +988,7 @@ struct Router2
                 WireScore base_score;
                 base_score.delay = 0;
                 base_score.cost = 0;
-                int wire_idx = wire_to_idx.at(wire);
+                int wire_idx = widx(wire);
                 base_score.togo_cost = get_togo_cost(net, i, wire_idx, src_wire, true, crit_weight);
                 t.bwd_queue.push(QueuedWire(wire_idx, base_score));
                 set_visited_bwd(t, wire_idx, PipId(), 0.0);
@@ -1013,7 +1030,7 @@ struct Router2
                         if (!ctx->checkPipAvailForNet(dh, net))
                             continue;
                         WireId next = ctx->getPipDstWire(dh);
-                        int next_idx = wire_to_idx.at(next);
+                        int next_idx = widx(next);
                         WireScore next_score;
                         next_score.delay = curr.score.delay + cfg.get_base_cost(ctx, next, dh, crit_weight);
                         next_score.cost = curr.score.cost + score_wire_for_arc(net, i, phys_pin, next, dh, crit_weight);
@@ -1088,7 +1105,7 @@ struct Router2
                         if (!ctx->checkPipAvailForNet(uh, net))
                             continue;
                         WireId next = ctx->getPipSrcWire(uh);
-                        int next_idx = wire_to_idx.at(next);
+                        int next_idx = widx(next);
                         WireScore next_score;
                         next_score.delay = curr.score.delay + cfg.get_base_cost(ctx, next, uh, crit_weight);
                         next_score.cost = curr.score.cost + score_wire_for_arc(net, i, phys_pin, next, uh, crit_weight);
@@ -1153,7 +1170,7 @@ struct Router2
                         ROUTE_LOG_DBG("         fwd pip: %s (%d, %d)\n", ctx->nameOfPip(pip),
                                       ctx->getPipLocation(pip).x, ctx->getPipLocation(pip).y);
                     }
-                    cursor_bwd = wire_to_idx.at(ctx->getPipSrcWire(pip));
+                    cursor_bwd = widx(ctx->getPipSrcWire(pip));
                 }
 
                 while (cursor_bwd != src_wire_idx) {
@@ -1171,7 +1188,7 @@ struct Router2
                     bind_pip_internal(nd, i, cursor_bwd, pip);
                     if (pip == PipId())
                         break;
-                    cursor_bwd = wire_to_idx.at(ctx->getPipSrcWire(pip));
+                    cursor_bwd = widx(ctx->getPipSrcWire(pip));
                 }
 
                 NPNR_ASSERT(cursor_bwd == src_wire_idx);
@@ -1193,7 +1210,7 @@ struct Router2
                                   ctx->getPipLocation(pip).y);
                 }
 
-                cursor_fwd = wire_to_idx.at(ctx->getPipDstWire(pip));
+                cursor_fwd = widx(ctx->getPipDstWire(pip));
                 bind_pip_internal(nd, i, cursor_fwd, pip);
                 if (ctx->debug && !is_mt) {
                     auto &wd = flat_wires.at(cursor_fwd);
@@ -1214,6 +1231,14 @@ struct Router2
             ROUTE_LOG_DBG("Failed routing arc %d of net '%s' (is_bb = %d) took %02fs\n", i.idx(), ctx->nameOf(net),
                           is_bb, std::chrono::duration<float>(arc_end - arc_start).count());
             result = ARC_RETRY_WITHOUT_BB;
+        }
+        if (ctx->verbose) {
+            float secs =
+                    std::chrono::duration<float>(std::chrono::high_resolution_clock::now() - arc_start).count();
+            if (secs > 0.5f)
+                log_info("    slow arc %d of %s: %s, bb %d (span %d), mode %d, %d wires explored, %.2fs\n", i.idx(),
+                         ctx->nameOf(net), result == ARC_SUCCESS ? "routed" : "failed", int(is_bb),
+                         (ad.bb.x1 - ad.bb.x0) + (ad.bb.y1 - ad.bb.y0), mode, explored, secs);
         }
         reset_wires(t);
         return result;
@@ -1646,7 +1671,7 @@ struct Router2
         for (size_t i = 0; i < nets_by_udata.size(); i++) {
             IdString name = nets_by_udata.at(i)->name;
             for (const auto &wire : nets.at(i).wires) {
-                const auto &wd = flat_wires.at(wire_to_idx.at(wire.first));
+                const auto &wd = flat_wires.at(widx(wire.first));
                 if (wd.curr_cong > 1)
                     congestion_by_net[name] += (wd.curr_cong - 1);
             }
@@ -1980,7 +2005,7 @@ struct Router2
         // to the values the snapshot was taken at.
         for (auto &w : s.wires)
             for (int k = 0; k < w.second.second; k++)
-                bind_pip_internal(nd, store_index<PortRef>(), wire_to_idx.at(w.first), w.second.first);
+                bind_pip_internal(nd, store_index<PortRef>(), widx(w.first), w.second.first);
         for (size_t u = 0; u < nd.arcs.size(); u++)
             for (size_t j = 0; j < nd.arcs.at(u).size(); j++) {
                 nd.arcs.at(u).at(j).routed = s.arcs.at(u).at(j).first;
