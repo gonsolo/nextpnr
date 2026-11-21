@@ -1148,6 +1148,7 @@ class HeAPPlacer
             chain_ripup_radius = std::max(p->max_x, p->max_y); // only ripup chains as last resort
             total_iters = 0;
             total_iters_noreset = 0;
+            legalised_by_type.clear();
             while (!remaining.empty()) {
                 auto top = remaining.top();
                 remaining.pop();
@@ -1187,12 +1188,22 @@ class HeAPPlacer
 
             total_iters++;
             total_iters_noreset++;
+            legalised_by_type[ci->type]++;
+            example_by_type[ci->type] = ci->name;
             if (total_iters > int(p->solve_cells.size())) {
                 total_iters = 0;
                 ripup_radius = std::min(std::max(p->max_x, p->max_y), ripup_radius * 2);
             }
 
             if (total_iters_noreset > std::max(5000, 8 * int(ctx->cells.size()))) {
+                // Name the cell types that kept being ripped up and placed again.
+                std::vector<std::pair<int, IdString>> counts;
+                for (auto &tc : legalised_by_type)
+                    counts.emplace_back(tc.second, tc.first);
+                std::sort(counts.rbegin(), counts.rend());
+                for (size_t k = 0; k < std::min<size_t>(6, counts.size()); k++)
+                    log_info("    legalised %s %d times, e.g. %s\n", counts[k].second.c_str(ctx), counts[k].first,
+                             example_by_type.at(counts[k].second).c_str(ctx));
                 log_error("Unable to find legal placement for all cells, design is probably at utilisation limit.\n");
             }
 
@@ -1316,6 +1327,8 @@ class HeAPPlacer
         Context *ctx;
 
         int ripup_radius, chain_ripup_radius, total_iters, total_iters_noreset;
+        dict<IdString, int> legalised_by_type;       // legalise_cell calls this run, for the error
+        dict<IdString, IdString> example_by_type;
 
         FastBels::FastBelsData *fb;
 
