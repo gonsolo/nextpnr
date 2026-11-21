@@ -288,6 +288,7 @@ class HeAPPlacer
                         CutSpreader(this, {type}).run();
 
                 // Run strict legalisation to find a valid bel for all cells
+                auto spread_endt = std::chrono::high_resolution_clock::now();
                 update_all_chains();
                 spread_hpwl = total_hpwl();
                 legalise_placement_strict();
@@ -295,6 +296,11 @@ class HeAPPlacer
 
                 legal_hpwl = total_hpwl();
                 auto run_stopt = std::chrono::high_resolution_clock::now();
+                if (ctx->verbose)
+                    log_info("    solve %.2fs, spread %.2fs, legalise %.2fs\n",
+                             std::chrono::duration<double>(solve_endt - solve_startt).count(),
+                             std::chrono::duration<double>(spread_endt - solve_endt).count(),
+                             std::chrono::duration<double>(run_stopt - spread_endt).count());
 
                 IdString bucket_name = ctx->getBelBucketName(*run.begin());
                 log_info("    at iteration #%d, type %s: wirelen solved = %d, spread = %d, legal = %d; time = %.02fs\n",
