@@ -557,6 +557,8 @@ struct Arch : BaseArch<ArchRanges>
         return IdString(chip_wire_info(chip_info, wire).const_value);
     }
     WireRange getWires() const override { return WireRange(chip_info); }
+    int getWireDenseCount() const { return tile_wire_base.empty() ? 0 : tile_wire_base.back(); }
+    int getWireDenseIndex(WireId wire) const { return tile_wire_base[wire.tile] + wire.index; }
     bool checkWireAvail(WireId wire) const override
     {
         if (!uarch->checkWireAvail(wire))
@@ -911,6 +913,7 @@ struct Arch : BaseArch<ArchRanges>
     void init_tiles();
     void set_fast_pip_delays(bool fast_mode);
     std::vector<IdString> tile_name;
+    std::vector<int> tile_wire_base; // getWireDenseIndex: the wires of all tiles before, then one past the last
     dict<IdString, int> tile_name2idx;
 
     // -------------------------------------------------

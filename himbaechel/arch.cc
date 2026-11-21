@@ -196,6 +196,14 @@ void Arch::init_tiles()
             tile_name2idx[name] = tile;
         }
     }
+    tile_wire_base.reserve(chip_info->tile_insts.size() + 1);
+    int64_t base = 0;
+    for (int tile = 0; tile < chip_info->tile_insts.ssize(); tile++) {
+        tile_wire_base.push_back(int(base));
+        base += chip_tile_info(chip_info, tile).wires.ssize();
+    }
+    NPNR_ASSERT(base <= std::numeric_limits<int>::max());
+    tile_wire_base.push_back(int(base));
 }
 
 void Arch::late_init()

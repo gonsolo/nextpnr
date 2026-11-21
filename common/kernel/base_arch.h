@@ -193,6 +193,10 @@ template <typename R> struct BaseArch : ArchAPI<R>
 
     // Wire methods
     virtual IdString getWireType(WireId /*wire*/) const override { return IdString(); }
+    // A dense numbering of the wires, 0 to getWireDenseCount() - 1, for tools that would otherwise
+    // hash every wire. A count of 0 means the arch has none; called on the concrete arch, not virtual.
+    int getWireDenseCount() const { return 0; }
+    int getWireDenseIndex(WireId /*wire*/) const { return -1; }
     virtual typename R::WireAttrsRangeT getWireAttrs(WireId) const override
     {
         return empty_if_possible<typename R::WireAttrsRangeT>();
