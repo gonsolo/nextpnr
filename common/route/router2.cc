@@ -1712,6 +1712,11 @@ struct Router2
 
     void do_route()
     {
+        using clock = std::chrono::steady_clock;
+        auto secs = [](clock::time_point a, clock::time_point b) {
+            return std::chrono::duration<double>(b - a).count();
+        };
+        auto t0 = clock::now();
         // Don't multithread if fewer than 200 nets (heuristic)
         if (route_queue.size() < 200) {
             ThreadContext st;
@@ -1720,6 +1725,9 @@ struct Router2
             for (size_t j = 0; j < route_queue.size(); j++) {
                 route_net(st, nets_by_udata[route_queue[j]], false);
             }
+            if (ctx->verbose)
+                log_info("    route split: %d nets single-threaded %.2fs\n", int(route_queue.size()),
+                         secs(t0, clock::now()));
             return;
         }
         const int Nq = 4, Nv = 2, Nh = 2;
@@ -1811,14 +1819,29 @@ struct Router2
             t.join();
         threads.clear();
 #endif
+        auto t1 = clock::now();
         // Singlethreaded part of routing - nets that cross partitions
         // or don't fit within bounding box
         for (auto st_net : tcs.at(N).route_nets)
             route_net(tcs.at(N), st_net, false);
+        auto t2 = clock::now();
         // Failed nets
-        for (int i = 0; i < N; i++)
-            for (auto fail : tcs.at(i).failed_nets)
+        int n_mt = 0, n_failed = 0;
+        for (int i = 0; i < N; i++) {
+            n_mt += int(tcs.at(i).route_nets.size());
+            n_failed += int(tcs.at(i).failed_nets.size());
+            for (auto fail : tcs.at(i).failed_nets) {
+                auto tf = clock::now();
                 route_net(tcs.at(N), fail, false);
+                if (ctx->verbose && secs(tf, clock::now()) > 1.0)
+                    log_info("    slow failed net %s: %d users, bin %d, %.2fs\n", ctx->nameOf(fail),
+                             int(fail->users.entries()), i, secs(tf, clock::now()));
+            }
+        }
+        if (ctx->verbose)
+            log_info("    route split: %d nets threaded %.2fs, %d crossing %.2fs, %d failed %.2fs\n", n_mt,
+                     secs(t0, t1), int(tcs.at(N).route_nets.size()), secs(t1, t2), n_failed,
+                     secs(t2, clock::now()));
     }
 
     delay_t get_route_delay(int net, store_index<PortRef> usr_idx, int phys_idx)
