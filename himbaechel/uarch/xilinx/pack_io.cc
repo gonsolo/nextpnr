@@ -1236,6 +1236,21 @@ void XC7Packer::pack_iologic()
             PortRef dest_port = *q->users.begin();
             auto is_tristate = dest_port.port == id_TRI;
 
+            // The OLOGIC flip-flop has one SR pin: keep S or R, whichever is driven, so the other
+            // is not renamed onto it as well.
+            for (IdString p : {id_S, id_R}) {
+                if (!ci->ports.count(p))
+                    continue;
+                NetInfo *n = ci->getPort(p);
+                if (n == nullptr || n->name == ctx->id("$PACKER_GND_NET")) {
+                    ci->disconnectPort(p);
+                    ci->ports.erase(p);
+                }
+            }
+            if (ci->ports.count(id_S) && ci->ports.count(id_R))
+                log_error("%s '%s' drives both S and R, but an OLOGIC flip-flop has one SR pin\n",
+                          ci->type.c_str(ctx), ctx->nameOf(ci));
+
             dict<IdString, XFormRule> oddr_rules;
             if (boost::contains(uarch->get_site_name(ol_site).str(ctx), "IOB18"))
                 oddr_rules[id_ODDR].new_type = is_tristate ? id_OLOGICE2_TFF : id_OLOGICE2_OUTFF;
