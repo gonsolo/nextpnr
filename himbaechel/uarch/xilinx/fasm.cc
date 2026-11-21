@@ -1128,7 +1128,7 @@ struct FasmBackend
     struct BankIoConfig
     {
         bool stepdown = false;
-        bool vref = false;
+        int vref_mv = 0; // the internal reference an SSTL input of the bank needs, 0 for none
         bool tmds_33 = false;
         bool lvds_25 = false;
         bool only_diff = false;
@@ -1538,7 +1538,13 @@ struct FasmBackend
                 }
 
                 if (is_sstl) {
-                    ioconfig_by_hclk[hclk].vref = true;
+                    // Half of VCCO: SSTL12 600 mV, SSTL135 675 mV, SSTL15 750 mV.
+                    int mv = iostandard == "SSTL12" ? 600 : iostandard == "SSTL135" ? 675 : 750;
+                    int &bank_mv = ioconfig_by_hclk[hclk].vref_mv;
+                    if (bank_mv != 0 && bank_mv != mv)
+                        log_error("%s needs a %d mV reference, but its bank already uses %d mV\n",
+                                  ctx->nameOf(pad), mv, bank_mv);
+                    bank_mv = mv;
                     if (!is_riob18)
                         write_bit("SSTL135_SSTL15.IN");
 
@@ -2136,7 +2142,8 @@ struct FasmBackend
         for (auto &hclk : ioconfig_by_hclk) {
             push(uarch->tile_name(hclk.first));
             write_bit("STEPDOWN", hclk.second.stepdown);
-            write_bit("VREF.V_675_MV", hclk.second.vref);
+            for (int mv : {600, 675, 750})
+                write_bit("VREF.V_" + std::to_string(mv) + "_MV", hclk.second.vref_mv == mv);
             write_bit("ONLY_DIFF_IN_USE", hclk.second.only_diff);
             write_bit("TMDS_33_IN_USE", hclk.second.tmds_33);
             write_bit("LVDS_25_IN_USE", hclk.second.lvds_25);
