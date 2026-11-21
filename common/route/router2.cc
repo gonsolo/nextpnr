@@ -983,9 +983,11 @@ struct Router2
             int toexplore = 25000 * std::max(1, (ad.bb.x1 - ad.bb.x0) + (ad.bb.y1 - ad.bb.y0));
             int iter = 0;
 
-            // Mode 0 required both queues to be live
-            while (((mode == 0) ? (!t.fwd_queue.empty() && !t.bwd_queue.empty())
-                                : (!t.fwd_queue.empty() || !t.bwd_queue.empty())) &&
+            // Mode 0 requires both queues to be live. So does a bounded search: once one side has
+            // explored all it reaches in the box without meeting the other, the box holds no path.
+            const bool both_live = mode == 0 || (is_bb && !const_mode);
+            while ((both_live ? (!t.fwd_queue.empty() && !t.bwd_queue.empty())
+                              : (!t.fwd_queue.empty() || !t.bwd_queue.empty())) &&
                    ((!is_bb && midpoint_wire == -1) || iter < toexplore)) {
                 ++iter;
                 const bool time_to_report_progress = (iter % 5000000) == 0;
