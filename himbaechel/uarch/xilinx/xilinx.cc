@@ -2007,6 +2007,8 @@ bool XilinxImpl::is_general_routing(WireId wire) const
 
 void XilinxImpl::find_source_sink_locs()
 {
+    source_locs.init(ctx->getWireDenseCount());
+    sink_locs.init(ctx->getWireDenseCount());
     for (auto &net : ctx->nets) {
         NetInfo *ni = net.second.get();
         for (auto &usr : ni->users) {
@@ -2014,7 +2016,7 @@ void XilinxImpl::find_source_sink_locs()
             if (bel == BelId() || is_logic_tile(bel))
                 continue; // don't need to do this for logic bels, which are always next to their INT
             WireId sink = ctx->getNetinfoSinkWire(ni, usr, 0);
-            if (sink == WireId() || sink_locs.count(sink))
+            if (sink == WireId() || sink_locs.has(ctx->getWireDenseIndex(sink)))
                 continue;
             std::queue<WireId> visit;
             dict<WireId, WireId> backtrace;
@@ -2030,12 +2032,12 @@ void XilinxImpl::find_source_sink_locs()
                 if (is_general_routing(cursor)) {
                     Loc loc(0, 0, 0);
                     tile_xy(ctx->chip_info, cursor.tile, loc.x, loc.y);
-                    sink_locs[sink] = loc;
+                    sink_locs.set(ctx->getWireDenseIndex(sink), loc.x, loc.y);
 
                     while (backtrace.count(cursor)) {
                         cursor = backtrace.at(cursor);
-                        if (!sink_locs.count(cursor)) {
-                            sink_locs[cursor] = loc;
+                        if (!sink_locs.has(ctx->getWireDenseIndex(cursor))) {
+                            sink_locs.set(ctx->getWireDenseIndex(cursor), loc.x, loc.y);
                         }
                     }
 
@@ -2056,7 +2058,7 @@ void XilinxImpl::find_source_sink_locs()
             if (bel == BelId() || is_logic_tile(bel))
                 continue; // don't need to do this for logic bels, which are always next to their INT
             WireId source = ctx->getNetinfoSourceWire(ni);
-            if (source == WireId() || source_locs.count(source))
+            if (source == WireId() || source_locs.has(ctx->getWireDenseIndex(source)))
                 continue;
             std::queue<WireId> visit;
             dict<WireId, WireId> backtrace;
@@ -2075,12 +2077,12 @@ void XilinxImpl::find_source_sink_locs()
                 if (is_general_routing(cursor)) {
                     Loc loc(0, 0, 0);
                     tile_xy(ctx->chip_info, cursor.tile, loc.x, loc.y);
-                    source_locs[source] = loc;
+                    source_locs.set(ctx->getWireDenseIndex(source), loc.x, loc.y);
 
                     while (backtrace.count(cursor)) {
                         cursor = backtrace.at(cursor);
-                        if (!source_locs.count(cursor)) {
-                            source_locs[cursor] = loc;
+                        if (!source_locs.has(ctx->getWireDenseIndex(cursor))) {
+                            source_locs.set(ctx->getWireDenseIndex(cursor), loc.x, loc.y);
                         }
                     }
 
@@ -2104,11 +2106,7 @@ delay_t XilinxImpl::estimateDelay(WireId src, WireId dst) const
     tile_xy(ctx->chip_info, src.tile, sx, sy);
     tile_xy(ctx->chip_info, dst.tile, dx, dy);
     auto src_type = ctx->getWireType(src);
-    auto fnd_src = source_locs.find(src);
-    if (fnd_src != source_locs.end()) {
-        sx = fnd_src->second.x;
-        sy = fnd_src->second.y;
-    } else {
+    if (!source_locs.get(ctx->getWireDenseIndex(src), sx, sy)) {
         if (src_type.in(id_DOUBLE, id_BENTQUAD, id_HQUAD, id_VQUAD)) {
             for (auto pip : ctx->getPipsDownhill(src)) {
                 tile_xy(ctx->chip_info, pip.tile, sx, sy);
@@ -2116,11 +2114,8 @@ delay_t XilinxImpl::estimateDelay(WireId src, WireId dst) const
             }
         }
     }
-    auto fnd_snk = sink_locs.find(dst);
-    if (fnd_snk != sink_locs.end()) {
-        dx = fnd_snk->second.x;
-        dy = fnd_snk->second.y;
-    } else {
+    const bool dst_is_sink = sink_locs.get(ctx->getWireDenseIndex(dst), dx, dy);
+    if (!dst_is_sink) {
         auto dst_type = ctx->getWireType(dst);
         if (dst_type.in(id_DOUBLE, id_BENTQUAD, id_HQUAD, id_VQUAD)) {
             for (auto pip : ctx->getPipsUphill(dst)) {
@@ -2145,7 +2140,7 @@ delay_t XilinxImpl::estimateDelay(WireId src, WireId dst) const
                20 * std::max(dist_y - 6, 0) + 300;
         base = (base * 3) / 2; // xc7
     }
-    if (fnd_snk != sink_locs.end())
+    if (dst_is_sink)
         base += 1000;
     bool same_tile = dx == sx && dy == sy;
     if (src_type == id_NODE_PINFEED && same_tile)
@@ -2215,14 +2210,11 @@ BoundingBox XilinxImpl::getRouteBoundingBox(WireId src, WireId dst) const
     tile_xy(ctx->chip_info, dst.tile, dx, dy);
     expand(dx, dy);
 
-    auto fnd_src = source_locs.find(src);
-    if (fnd_src != source_locs.end()) {
-        expand(fnd_src->second.x, fnd_src->second.y);
-    }
-    auto fnd_snk = sink_locs.find(dst);
-    if (fnd_snk != sink_locs.end()) {
-        expand(fnd_snk->second.x, fnd_snk->second.y);
-    }
+    int lx, ly;
+    if (source_locs.get(ctx->getWireDenseIndex(src), lx, ly))
+        expand(lx, ly);
+    if (sink_locs.get(ctx->getWireDenseIndex(dst), lx, ly))
+        expand(lx, ly);
     return {x0 - 2, y0 - 2, x1 + 2, y1 + 2};
 }
 

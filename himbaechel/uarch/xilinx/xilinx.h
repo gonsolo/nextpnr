@@ -273,8 +273,24 @@ struct XilinxImpl : HimbaechelAPI
 
     bool cell_tags_set = false;
 
-    // Improved delay predictions where sites are located far from their associated interconnect
-    dict<WireId, Loc> source_locs, sink_locs;
+    // Improved delay predictions where sites are located far from their associated interconnect.
+    // By the arch's dense wire index: estimateDelay reads them for every wire the router scores.
+    struct DenseWireLocs
+    {
+        std::vector<int32_t> xy; // x << 16 | y, or -1 for none; empty until find_source_sink_locs
+        void init(int n) { xy.assign(n, -1); }
+        bool has(int i) const { return !xy.empty() && xy[i] >= 0; }
+        void set(int i, int x, int y) { xy[i] = (x << 16) | y; }
+        bool get(int i, int &x, int &y) const
+        {
+            if (!has(i))
+                return false;
+            x = xy[i] >> 16;
+            y = xy[i] & 0xFFFF;
+            return true;
+        }
+    };
+    DenseWireLocs source_locs, sink_locs;
     bool is_general_routing(WireId wire) const;
     void find_source_sink_locs();
 
