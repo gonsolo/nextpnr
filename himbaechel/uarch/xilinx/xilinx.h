@@ -182,6 +182,11 @@ struct XilinxImpl : HimbaechelAPI
     // Cached: is_pip_unavail is on the router's hot path.
     mutable bool design_has_bufr = false;
     mutable bool design_has_bufr_valid = false;
+    // is_pip_unavail's name tests, per tile type and per tile-type wire, made once in init.
+    enum : uint8_t { TT_CLK_BUFG_R = 1, TT_DSP = 2, TT_SING_IOI3 = 4 };
+    enum : uint8_t { TW_BUFR_CLOCK_PATH = 1, TW_IMUX_OR_CTRL0 = 2, TW_CLK = 4 };
+    std::vector<uint8_t> tile_type_flags;
+    std::vector<std::vector<uint8_t>> tile_wire_flags;
     bool checkPipAvail(PipId pip) const override { return !is_pip_unavail(pip); }
     bool checkPipAvailForNet(PipId pip, const NetInfo *net) const override { return !is_pip_unavail(pip); }
 

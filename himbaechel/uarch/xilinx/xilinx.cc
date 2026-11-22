@@ -220,6 +220,31 @@ void XilinxImpl::init(Context *ctx)
     h.init(ctx);
     HimbaechelAPI::init(ctx);
 
+    for (auto &tt : ctx->chip_info->tile_types) {
+        const std::string &name = IdString(tt.type_name).str(ctx);
+        uint8_t f = 0;
+        if (boost::starts_with(name, "CLK_BUFG_TOP_R") || boost::starts_with(name, "CLK_BUFG_BOT_R"))
+            f |= TT_CLK_BUFG_R;
+        if (name == "DSP_L" || name == "DSP_R")
+            f |= TT_DSP;
+        if (name == "RIOI3_SING" || name == "LIOI3_SING" || name == "RIOI_SING")
+            f |= TT_SING_IOI3;
+        tile_type_flags.push_back(f);
+        auto &wf = tile_wire_flags.emplace_back();
+        for (auto &w : tt.wires) {
+            const std::string &wn = IdString(w.name).str(ctx);
+            auto has = [&](const char *s) { return wn.find(s) != std::string::npos; };
+            uint8_t g = 0;
+            if (has("CK_BUFRCLK") || has("RCLK_BEFORE_DIV") || has("RCLK_OUT") || has("RCLK2RCLK"))
+                g |= TW_BUFR_CLOCK_PATH;
+            if (has("IMUX") || has("CTRL0"))
+                g |= TW_IMUX_OR_CTRL0;
+            if (has("CLK"))
+                g |= TW_CLK;
+            wf.push_back(g);
+        }
+    }
+
     // Resolve the repeated-name bel types once (the placer looks buckets up per
     // cell); everything else buckets as its own type.
     for (auto bel : ctx->getBels()) {
@@ -457,19 +482,13 @@ if (cell.second->type.in(id_BUFR, id_BUFR_BUFR)) {
                 }
             design_has_bufr_valid = true;
         }
+        int tile_type = ctx->chip_info->tile_insts[pip.tile].type;
         if (!design_has_bufr) {
-            IdString dst = IdString(chip_tile_info(ctx->chip_info, pip.tile).wires[pip_data.dst_wire].name);
-            const std::string &d = dst.str(ctx);
-            bool drives_bufr_clock_path =
-                    d.find("CK_BUFRCLK") != std::string::npos || d.find("RCLK_BEFORE_DIV") != std::string::npos ||
-                    d.find("RCLK_OUT") != std::string::npos || d.find("RCLK2RCLK") != std::string::npos;
+            bool drives_bufr_clock_path = tile_wire_flags[tile_type][pip_data.dst_wire] & TW_BUFR_CLOCK_PATH;
             if (drives_bufr_clock_path)
                 return true;
         }
-        IdString tt = IdString(chip_tile_info(ctx->chip_info, pip.tile).type_name);
-        std::string tts = tt.str(ctx);
-        bool tile_is_clk_bufg_r =
-                (boost::starts_with(tts, "CLK_BUFG_TOP_R") || boost::starts_with(tts, "CLK_BUFG_BOT_R"));
+        bool tile_is_clk_bufg_r = tile_type_flags[tile_type] & TT_CLK_BUFG_R;
         if (tile_is_clk_bufg_r) {
             bool has_bound_bufgctrl = false;
             const auto &tile_data = chip_tile_info(ctx->chip_info, pip.tile);
@@ -532,18 +551,17 @@ if (cell.second->type.in(id_BUFR, id_BUFR_BUFR)) {
         // use, so the two exemption paths there must be mirrored here or we
         // reject pips that were never a problem.  (Banning the DSP class broke
         // VCC -> DSP48.OPMODE*INV_OUT routing outright.)
-        std::string tts = tt.str(ctx);
+        int tile_type = ctx->chip_info->tile_insts[pip.tile].type;
         bool writer_emits_nothing = false;
-        bool is_dsp_tile = tts == "DSP_L" || tts == "DSP_R";
-        bool is_sing_ioi3_tile = tts == "RIOI3_SING" || tts == "LIOI3_SING" || tts == "RIOI_SING";
+        bool is_dsp_tile = tile_type_flags[tile_type] & TT_DSP;
+        bool is_sing_ioi3_tile = tile_type_flags[tile_type] & TT_SING_IOI3;
         if (is_dsp_tile) {
             // fasm.cc: "FIXME: PPIPs missing for DSPs" -- whole tile skipped
             writer_emits_nothing = true;
         } else if (is_sing_ioi3_tile) {
             // fasm.cc: "FIXME: PPIPs missing for SING IOI3s"
-            std::string sn = src.str(ctx), dn = dst.str(ctx);
-            bool from_imux_or_ctrl = sn.find("IMUX") != std::string::npos || sn.find("CTRL0") != std::string::npos;
-            bool to_clock_wire = dn.find("CLK") != std::string::npos;
+            bool from_imux_or_ctrl = tile_wire_flags[tile_type][pip_data.src_wire] & TW_IMUX_OR_CTRL0;
+            bool to_clock_wire = tile_wire_flags[tile_type][pip_data.dst_wire] & TW_CLK;
             writer_emits_nothing = from_imux_or_ctrl && !to_clock_wire;
         }
         bool has_pseudo_pip_fasm = pseudo_pip_config.count(PseudoPipKey{tt, dst, src});
