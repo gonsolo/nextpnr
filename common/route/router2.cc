@@ -29,6 +29,7 @@
 #include "router2.h"
 
 #include <algorithm>
+#include <atomic>
 #include <boost/container/flat_map.hpp>
 #include <chrono>
 #include <deque>
@@ -229,6 +230,7 @@ struct Router2
         return widx(w);
     }
     std::vector<PerWireData> flat_wires;
+    std::atomic<int64_t> total_explored{0};
 
     PerWireData &wire_data(WireId w) { return flat_wires[widx(w)]; }
 
@@ -935,6 +937,7 @@ struct Router2
         int midpoint_wire = -1;
         float best_midpoint_cost = 0;
         int explored = 1;
+        bool end_fwd_empty = false, end_bwd_empty = false;
 
         for (; mode < 2; mode++) {
             // Clear out the queues
@@ -1138,6 +1141,8 @@ struct Router2
                     }
                 }
             }
+            end_fwd_empty = t.fwd_queue.empty();
+            end_bwd_empty = t.bwd_queue.empty();
             if (midpoint_wire != -1)
                 break;
         }
@@ -1239,7 +1244,13 @@ struct Router2
                 log_info("    slow arc %d of %s: %s, bb %d (span %d), mode %d, %d wires explored, %.2fs\n", i.idx(),
                          ctx->nameOf(net), result == ARC_SUCCESS ? "routed" : "failed", int(is_bb),
                          (ad.bb.x1 - ad.bb.x0) + (ad.bb.y1 - ad.bb.y0), mode, explored, secs);
+            if (result != ARC_SUCCESS && is_bb)
+                log_info("      no path in box: %s%s, %s -> %s, net box (%d,%d)-(%d,%d), %d users\n",
+                         end_fwd_empty ? "fwd empty " : "", end_bwd_empty ? "bwd empty" : "",
+                         ctx->nameOfWire(src_wire), ctx->nameOfWire(dst_wire), nd.bb.x0, nd.bb.y0, nd.bb.x1,
+                         nd.bb.y1, int(net->users.entries()));
         }
+        total_explored += explored;
         reset_wires(t);
         return result;
     }
@@ -1753,8 +1764,8 @@ struct Router2
                 route_net(st, nets_by_udata[route_queue[j]], false);
             }
             if (ctx->verbose)
-                log_info("    route split: %d nets single-threaded %.2fs\n", int(route_queue.size()),
-                         secs(t0, clock::now()));
+                log_info("    route split: %d nets single-threaded %.2fs, %lld wires explored\n",
+                         int(route_queue.size()), secs(t0, clock::now()), (long long)total_explored.exchange(0));
             return;
         }
         const int Nq = 4, Nv = 2, Nh = 2;
@@ -1866,9 +1877,9 @@ struct Router2
             }
         }
         if (ctx->verbose)
-            log_info("    route split: %d nets threaded %.2fs, %d crossing %.2fs, %d failed %.2fs\n", n_mt,
-                     secs(t0, t1), int(tcs.at(N).route_nets.size()), secs(t1, t2), n_failed,
-                     secs(t2, clock::now()));
+            log_info("    route split: %d nets threaded %.2fs, %d crossing %.2fs, %d failed %.2fs, %lld wires explored\n",
+                     n_mt, secs(t0, t1), int(tcs.at(N).route_nets.size()), secs(t1, t2), n_failed,
+                     secs(t2, clock::now()), (long long)total_explored.exchange(0));
     }
 
     delay_t get_route_delay(int net, store_index<PortRef> usr_idx, int phys_idx)
