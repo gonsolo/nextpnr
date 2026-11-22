@@ -362,15 +362,18 @@ void XC7Packer::pack_carries()
                     ++duplicated;
                 }
             }
+            // DI can come from the X bypass (xCY0 mux) instead of a 5LUT, except DI0 of
+            // the first CARRY4, whose X may carry CYINIT, and constants
+            const bool di_via_x = c4_di != nullptr && i > 0 && c4_di->constant_value == IdString();
             int lut_inp_count = int(unique_lut_inputs.size());
             if (!s_lut)
                 ++lut_inp_count; // for feedthrough
-            if (!di_lut)
+            if (!di_lut && !di_via_x)
                 ++lut_inp_count; // for feedthrough
             if (lut_inp_count > 5) {
                 // Must use feedthrough for at least one LUT
                 di_lut = nullptr;
-                if (s_inputs > 4)
+                if (s_inputs > 4 && !di_via_x)
                     s_lut = nullptr;
             }
             // If LUTs are nullptr, that means we need a feedthrough lut
@@ -381,7 +384,7 @@ void XC7Packer::pack_carries()
                 auto s_feed = feed_through_lut(c4_s, {pr});
                 s_lut = s_feed;
             }
-            if (!di_lut && c4_di) {
+            if (!di_lut && c4_di && !di_via_x) {
                 PortRef pr;
                 pr.cell = c4;
                 pr.port = ctx->idf("DI[%d]", z);

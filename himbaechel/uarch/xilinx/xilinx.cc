@@ -1973,9 +1973,14 @@ void XilinxImpl::assign_cell_tags()
             for (int i = 0; i < 4; i++) {
                 ct.carry.out_sigs[i] = ci->getPort(ctx->idf("O%d", i));
                 ct.carry.cout_sigs[i] = ci->getPort(ctx->idf("CO%d", i));
-                ct.carry.x_sigs[i] = nullptr;
+                NetInfo *di = ci->getPort(ctx->idf("DI%d", i));
+                CellInfo *drv = di ? di->driver.cell : nullptr;
+                const bool from_o5 = drv != nullptr && drv->cluster == ci->cluster && drv->cluster != ClusterId() &&
+                                     drv->constr_abs_z && drv->constr_z == (i << 4 | BEL_5LUT);
+                ct.carry.x_sigs[i] = (di && !from_o5 && di->constant_value == IdString()) ? di : nullptr;
             }
-            ct.carry.x_sigs[0] = ci->getPort(id_CYINIT);
+            if (ci->getPort(id_CYINIT))
+                ct.carry.x_sigs[0] = ci->getPort(id_CYINIT);
         } else if (ci->type == id_RAMB18E1_RAMB18E1 || ci->type == id_RAMB36E1_RAMB36E1) {
             bool read_sdp = ((ci->type == id_RAMB18E1_RAMB18E1 &&
                               int_or_default(ci->params, ctx->id("READ_WIDTH_B"), 0) == 36) ||
