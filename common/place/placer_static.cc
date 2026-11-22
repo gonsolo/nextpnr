@@ -1544,8 +1544,10 @@ class StaticPlacer
                                     CellInfo *drv = p.net->driver.cell;
                                     if (drv->udata == -1)
                                         continue;
-                                    auto drv_loc = mcells.at(drv->udata);
-                                    input_len += std::abs(int(drv_loc.pos.x) - nx) + std::abs(int(drv_loc.pos.y) - ny);
+                                    auto &drv_pos = mcells.at(drv->udata).pos;
+                                    int dx = place_x_to_bel_x.at(std::max(0, std::min(int(drv_pos.x), width - 1)));
+                                    int dy = place_y_to_bel_y.at(std::max(0, std::min(int(drv_pos.y), height - 1)));
+                                    input_len += std::abs(dx - nx) + std::abs(dy - ny);
                                 }
                                 if (input_len < best_inp_len) {
                                     best_inp_len = input_len;
