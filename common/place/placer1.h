@@ -30,6 +30,9 @@ struct Placer1Cfg
     float constraintWeight, netShareWeight;
     int minBelsForGridPick;
     float startTemp;
+    // Refinement after an analytic placer: window and temperature
+    int refineDiameter = 3;
+    float refineTemp = 1e-7;
     int timingFanoutThresh;
     bool timing_driven;
     int hpwl_scale_x, hpwl_scale_y;

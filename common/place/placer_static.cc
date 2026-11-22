@@ -1706,6 +1706,8 @@ class StaticPlacer
             auto placer1_cfg = Placer1Cfg(ctx);
             placer1_cfg.hpwl_scale_x = cfg.hpwl_scale_x;
             placer1_cfg.hpwl_scale_y = cfg.hpwl_scale_y;
+            placer1_cfg.refineDiameter = 8;
+            placer1_cfg.refineTemp = 1e-6;
             placer1_refine(ctx, placer1_cfg);
         }
     }

@@ -231,7 +231,7 @@ class SAPlacer
                 }
             }
             require_legal = false;
-            diameter = 3;
+            diameter = cfg.refineDiameter;
             log_info("Running simulated annealing placer for refinement.\n");
         }
         auto saplace_start = std::chrono::high_resolution_clock::now();
@@ -255,7 +255,7 @@ class SAPlacer
         wirelen_t min_wirelen = curr_wirelen_cost;
 
         int n_no_progress = 0;
-        temp = refine ? 1e-7 : cfg.startTemp;
+        temp = refine ? cfg.refineTemp : cfg.startTemp;
 
         // Main simulated annealing loop
         for (int iter = 1;; iter++) {
