@@ -1319,10 +1319,26 @@ struct Router2
                     // Attempt a re-route without the bounding box constraint
                     ROUTE_LOG_DBG("Rerouting arc %d.%d of net '%s' without bounding box, possible tricky routing...\n",
                                   a.first.idx(), int(a.second), ctx->nameOf(net));
-                    auto res2 = route_arc(t, net, a.first, a.second, is_mt, false);
-                    const bool the_unbounded_search_was_needed = (res2 == ARC_SUCCESS);
-                    if (the_unbounded_search_was_needed)
-                        nd.bb_useless = true;
+                    auto res2 = ARC_RETRY_WITHOUT_BB;
+                    if (!nd.bb_useless) {
+                        const BoundingBox orig_bb = nd.bb;
+                        for (int grow : {8, 24}) {
+                            nd.bb.x0 = std::max(orig_bb.x0 - grow, 0);
+                            nd.bb.y0 = std::max(orig_bb.y0 - grow, 0);
+                            nd.bb.x1 = std::min(orig_bb.x1 + grow, ctx->getGridDimX());
+                            nd.bb.y1 = std::min(orig_bb.y1 + grow, ctx->getGridDimY());
+                            res2 = route_arc(t, net, a.first, a.second, is_mt, true);
+                            if (res2 != ARC_RETRY_WITHOUT_BB)
+                                break;
+                        }
+                        if (res2 == ARC_RETRY_WITHOUT_BB)
+                            nd.bb = orig_bb;
+                    }
+                    if (res2 == ARC_RETRY_WITHOUT_BB) {
+                        res2 = route_arc(t, net, a.first, a.second, is_mt, false);
+                        if (res2 == ARC_SUCCESS)
+                            nd.bb_useless = true;
+                    }
                     // If this also fails, no choice but to give up
                     if (res2 != ARC_SUCCESS) {
                         if (ctx->debug) {
