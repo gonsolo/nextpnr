@@ -274,6 +274,12 @@ void XC7Packer::pack_carries()
             // Check legality of LUTs driving CARRY4, making them legal if they aren't already
             NetInfo *c4_s = c4->getPort(ctx->idf("S[%d]", z));
             NetInfo *c4_di = c4->getPort(ctx->idf("DI[%d]", z));
+            // DI can come from the X bypass (xCY0 mux) instead of a 5LUT, except DI0 of
+            // the first CARRY4, whose X may carry CYINIT, and constants
+            const bool di_via_x = c4_di != nullptr && i > 0 && c4_di->constant_value == IdString();
+            // Without a DI LUT the 5LUT is free, and a LUT6 can drive S from O6
+            const bool s_lut6 = c4_s != nullptr && c4_s->driver.cell != nullptr &&
+                                c4_s->driver.cell->type == id_LUT6 && (c4_di == nullptr || di_via_x);
             // Keep track of the total LUT input count; cannot exceed five or the LUTs cannot be packed together
             pool<IdString> unique_lut_inputs;
             int s_inputs = 0;
@@ -284,11 +290,12 @@ void XC7Packer::pack_carries()
             CellInfo *s_dup_source = nullptr;
             pool<IdString> s_dup_inputs;
             if (c4_s) {
-                const bool s_driven_by_lut = c4_s->driver.cell != nullptr && lut_types.count(c4_s->driver.cell->type);
+                const bool s_driven_by_lut =
+                        s_lut6 || (c4_s->driver.cell != nullptr && lut_types.count(c4_s->driver.cell->type));
                 const bool s_is_only_load = c4_s->users.entries() == 1;
                 if (s_driven_by_lut && s_is_only_load) {
                     s_lut = c4_s->driver.cell;
-                    for (int j = 0; j < 5; j++) {
+                    for (int j = 0; j < 6; j++) {
                         NetInfo *ix = s_lut->getPort(ctx->idf("I%d", j));
                         if (ix) {
                             unique_lut_inputs.insert(ix->name);
@@ -297,7 +304,7 @@ void XC7Packer::pack_carries()
                     }
                 } else if (s_driven_by_lut) {
                     s_dup_source = c4_s->driver.cell;
-                    for (int j = 0; j < 5; j++) {
+                    for (int j = 0; j < 6; j++) {
                         NetInfo *ix = s_dup_source->getPort(ctx->idf("I%d", j));
                         if (ix)
                             s_dup_inputs.insert(ix->name);
@@ -332,7 +339,7 @@ void XC7Packer::pack_carries()
                 for (IdString ix : s_dup_inputs)
                     shared_inputs.insert(ix);
                 const int shared_input_count = int(shared_inputs.size()) + (di_lut ? 0 : 1);
-                const bool duplicate_fits = shared_input_count <= 5;
+                const bool duplicate_fits = s_lut6 || shared_input_count <= 5;
                 const bool source_is_free = s_dup_source->cluster == ClusterId();
                 if (duplicate_fits && source_is_free) {
                     s_lut = s_dup_source;
@@ -343,7 +350,7 @@ void XC7Packer::pack_carries()
                     CellInfo *dup = ctx->createCell(ctx->idf("%s$S_DUP%d", s_dup_source->name.c_str(ctx), ++autoidx),
                                                     s_dup_source->type);
                     NetInfo *dup_out = ctx->createNet(ctx->idf("%s$S_DUP%d", c4_s->name.c_str(ctx), ++autoidx));
-                    for (int j = 0; j < 5; j++) {
+                    for (int j = 0; j < 6; j++) {
                         IdString ip = ctx->idf("I%d", j);
                         const bool source_has_input = s_dup_source->ports.count(ip);
                         if (!source_has_input)
@@ -362,15 +369,14 @@ void XC7Packer::pack_carries()
                     ++duplicated;
                 }
             }
-            // DI can come from the X bypass (xCY0 mux) instead of a 5LUT, except DI0 of
-            // the first CARRY4, whose X may carry CYINIT, and constants
-            const bool di_via_x = c4_di != nullptr && i > 0 && c4_di->constant_value == IdString();
+            if (s_lut6 && s_lut != nullptr)
+                di_lut = nullptr;
             int lut_inp_count = int(unique_lut_inputs.size());
             if (!s_lut)
                 ++lut_inp_count; // for feedthrough
             if (!di_lut && !di_via_x)
                 ++lut_inp_count; // for feedthrough
-            if (lut_inp_count > 5) {
+            if (lut_inp_count > 5 && !(s_lut6 && s_lut != nullptr)) {
                 // Must use feedthrough for at least one LUT
                 di_lut = nullptr;
                 if (s_inputs > 4 && !di_via_x)
