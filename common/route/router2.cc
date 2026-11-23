@@ -231,6 +231,9 @@ struct Router2
     }
     std::vector<PerWireData> flat_wires;
     std::atomic<int64_t> total_explored{0};
+    // Paid path cost against estimated delay of routed arcs, in 1/1000; scales the A* estimate.
+    std::atomic<int64_t> paid_cost{0}, est_cost{0};
+    std::atomic<float> togo_scale{1.0f};
 
     PerWireData &wire_data(WireId w) { return flat_wires[widx(w)]; }
 
@@ -984,6 +987,7 @@ struct Router2
         auto &ad = nd.arcs.at(i.idx()).at(phys_pin);
         auto &usr = net->users.at(i);
         bool const_mode = is_dedi_const_net(net);
+        const float scale = togo_scale.load(std::memory_order_relaxed);
         ROUTE_LOG_DBG("Routing arc %d of net '%s' (%d, %d) -> (%d, %d)\n", i.idx(), ctx->nameOf(net), ad.bb.x0,
                       ad.bb.y0, ad.bb.x1, ad.bb.y1);
         WireId src_wire = ctx->getNetinfoSourceWire(net), dst_wire = ctx->getNetinfoSinkWire(net, usr, phys_pin);
@@ -1115,7 +1119,7 @@ struct Router2
                         next_score.delay = curr.score.delay + cfg.get_base_cost(ctx, next, dh, crit_weight);
                         next_score.cost = curr.score.cost + score_wire_for_arc(net, i, phys_pin, next, dh, crit_weight);
                         next_score.togo_cost =
-                                cfg.estimate_weight * get_togo_cost(net, i, next_idx, dst_wire, false, crit_weight);
+                                cfg.estimate_weight * scale * get_togo_cost(net, i, next_idx, dst_wire, false, crit_weight);
                         if (was_visited_fwd(next_idx, next_score.delay)) {
                             // Don't expand the same node twice.
                             continue;
@@ -1191,7 +1195,7 @@ struct Router2
                         next_score.cost = curr.score.cost + score_wire_for_arc(net, i, phys_pin, next, uh, crit_weight);
                         next_score.togo_cost = const_mode
                                                        ? 0
-                                                       : cfg.estimate_weight * get_togo_cost(net, i, next_idx, src_wire,
+                                                       : cfg.estimate_weight * scale * get_togo_cost(net, i, next_idx, src_wire,
                                                                                              true, crit_weight);
                         if (was_visited_bwd(next_idx, next_score.delay)) {
                             // Don't expand the same node twice.
@@ -1301,6 +1305,18 @@ struct Router2
                 }
             }
             NPNR_ASSERT(cursor_fwd == dst_wire_idx);
+            if (!const_mode) {
+                float paid = 0;
+                for (WireId w = dst_wire; nd.wires.count(w);) {
+                    PipId pip = nd.wires.at(w).first;
+                    if (pip == PipId())
+                        break;
+                    paid += score_wire_for_arc(net, i, phys_pin, w, pip, crit_weight);
+                    w = ctx->getPipSrcWire(pip);
+                }
+                paid_cost += int64_t(1000 * paid);
+                est_cost += int64_t(1000 * ctx->getDelayNS(ctx->estimateDelay(src_wire, dst_wire)));
+            }
 
             update_wire_by_loc(t, net, i, phys_pin, is_mt);
             t.processed_sinks.insert(dst_wire);
@@ -1479,6 +1495,12 @@ struct Router2
 
     void update_congestion()
     {
+        const int64_t paid = paid_cost.exchange(0), est = est_cost.exchange(0);
+        if (est > 0) {
+            togo_scale.store(std::min(8.0f, std::max(1.0f, float(double(paid) / double(est)))));
+            if (ctx->verbose)
+                log_info("    A* estimate scale %.2f (paid %lld est %lld)\n", togo_scale.load(), (long long)paid, (long long)est);
+        }
         total_wire_overuse = 0;
         overused_wires = 0;
         total_wire_use = 0;
