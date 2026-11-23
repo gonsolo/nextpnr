@@ -234,6 +234,83 @@ struct Router2
 
     PerWireData &wire_data(WireId w) { return flat_wires[widx(w)]; }
 
+    // Grow net boxes that cut the source off from a sink around holes in the fabric (hard blocks).
+    void fit_boxes_to_fabric()
+    {
+        const int W = ctx->getGridDimX(), H = ctx->getGridDimY();
+        std::vector<int> pips(W * H, 0);
+        for (PipId p : ctx->getPips()) {
+            Loc l = ctx->getPipLocation(p);
+            if (l.x >= 0 && l.x < W && l.y >= 0 && l.y < H)
+                ++pips[l.y * W + l.x];
+        }
+        // Switchbox tiles have hundreds of pips; widen them over the logic columns between switchboxes.
+        std::vector<uint8_t> open(W * H, 0);
+        for (int y = 0; y < H; y++)
+            for (int x = 0; x < W; x++) {
+                if (pips[y * W + x] < 500)
+                    continue;
+                for (int yy = std::max(y - 1, 0); yy <= std::min(y + 1, H - 1); yy++)
+                    for (int xx = std::max(x - 3, 0); xx <= std::min(x + 3, W - 1); xx++)
+                        open[yy * W + xx] = 1;
+            }
+        std::vector<int> closed((W + 1) * (H + 1), 0);
+        for (int y = 0; y < H; y++)
+            for (int x = 0; x < W; x++)
+                closed[(y + 1) * (W + 1) + x + 1] = !open[y * W + x] + closed[y * (W + 1) + x + 1] +
+                                                    closed[(y + 1) * (W + 1) + x] - closed[y * (W + 1) + x];
+        std::vector<int> seen(W * H, 0), queue;
+        int stamp = 0, grown = 0;
+        for (auto &nd : nets) {
+            if (nd.src_wire == WireId())
+                continue;
+            const auto &s = wire_data(nd.src_wire);
+            for (int step = 0; step < 16; step++) {
+                const int x0 = std::max(nd.bb.x0, 0), y0 = std::max(nd.bb.y0, 0);
+                const int x1 = std::min(nd.bb.x1, W - 1), y1 = std::min(nd.bb.y1, H - 1);
+                if (closed[(y1 + 1) * (W + 1) + x1 + 1] - closed[y0 * (W + 1) + x1 + 1] -
+                            closed[(y1 + 1) * (W + 1) + x0] + closed[y0 * (W + 1) + x0] ==
+                    0)
+                    break;
+                ++stamp;
+                queue.assign(1, s.y * W + s.x);
+                seen[s.y * W + s.x] = stamp;
+                for (size_t q = 0; q < queue.size(); q++) {
+                    const int cx = queue[q] % W, cy = queue[q] / W;
+                    const int nb[4][2] = {{cx - 1, cy}, {cx + 1, cy}, {cx, cy - 1}, {cx, cy + 1}};
+                    for (auto &n : nb) {
+                        if (n[0] < x0 || n[0] > x1 || n[1] < y0 || n[1] > y1)
+                            continue;
+                        const int c = n[1] * W + n[0];
+                        if (open[c] && seen[c] != stamp) {
+                            seen[c] = stamp;
+                            queue.push_back(c);
+                        }
+                    }
+                }
+                bool all = true;
+                for (auto &arcs : nd.arcs)
+                    for (auto &ad : arcs) {
+                        const auto &d = wire_data(ad.sink_wire);
+                        bool hit = false;
+                        for (int yy = std::max(d.y - 1, y0); yy <= std::min(d.y + 1, y1) && !hit; yy++)
+                            for (int xx = std::max(d.x - 1, x0); xx <= std::min(d.x + 1, x1) && !hit; xx++)
+                                hit = seen[yy * W + xx] == stamp;
+                        all = all && hit;
+                    }
+                if (all)
+                    break;
+                grown += step == 0;
+                nd.bb.x0 = std::max(nd.bb.x0 - 8, 0);
+                nd.bb.y0 = std::max(nd.bb.y0 - 8, 0);
+                nd.bb.x1 = std::min(nd.bb.x1 + 8, W);
+                nd.bb.y1 = std::min(nd.bb.y1 + 8, H);
+            }
+            nd.base_bb = nd.bb;
+        }
+        log_info("Grew the boxes of %d nets around holes in the fabric.\n", grown);
+    }
+
     void setup_wires()
     {
         // Set up per-wire structures, so that MT parts don't have to do any memory allocation
@@ -2393,6 +2470,7 @@ struct Router2
         setup_resources();
         setup_nets();
         setup_wires();
+        fit_boxes_to_fabric();
         find_all_reserved_wires();
         partition_nets();
         curr_cong_weight = cfg.init_curr_cong_weight;
