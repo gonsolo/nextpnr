@@ -265,6 +265,8 @@ struct XilinxImpl : HimbaechelAPI
     // device on a bigger die does not offer.  Placement does not look at it.
     pool<BelId> uncounted_bels;
     void init_part_resources();
+    std::vector<bool> prohibited_tiles;
+    bool checkBelAvail(BelId bel) const override;
     bool getBelHidden(BelId bel) const override;
     void check_part_limits() const;
 

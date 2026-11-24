@@ -43,6 +43,8 @@
 // here either; the counts are checked after packing, and the utilisation
 // leaves out the bels a part does not offer.
 
+#include <boost/algorithm/string/predicate.hpp>
+
 #include "log.h"
 #include "nextpnr.h"
 #include "util.h"
@@ -128,6 +130,30 @@ void XilinxImpl::init_part_resources()
         if (beyond_the_part)
             uncounted_bels.insert(bel);
     }
+
+    // Vivado prohibits the slices of a CLB next to a GTP interface (200 on an xc7a200t).
+    const int width = ctx->chip_info->width;
+    prohibited_tiles.assign(ctx->chip_info->tile_insts.ssize(), false);
+    int prohibited = 0;
+    for (int tile = 0; tile < int(prohibited_tiles.size()); tile++) {
+        if (!boost::starts_with(tile_name(tile), "CLB"))
+            continue;
+        for (int dx : {-1, 1}) {
+            int x = tile % width + dx;
+            if (x < 0 || x >= width)
+                continue;
+            if (boost::starts_with(tile_name(tile - tile % width + x), "GTP_INT_INT_TERM"))
+                prohibited_tiles.at(tile) = true;
+        }
+        prohibited += prohibited_tiles.at(tile);
+    }
+    if (prohibited > 0)
+        log_info("Leaving out %d CLB tiles next to GTP interfaces.\n", prohibited);
+}
+
+bool XilinxImpl::checkBelAvail(BelId bel) const
+{
+    return prohibited_tiles.empty() || !prohibited_tiles.at(bel.tile);
 }
 
 bool XilinxImpl::getBelHidden(BelId bel) const
