@@ -1128,6 +1128,17 @@ void XilinxImpl::close_routed_tiles()
         log_info("Pre-routed: %d more tile(s) closed to new cells, a reference route passes through them.\n", closed);
 }
 
+void XilinxImpl::init_delay_matrix()
+{
+    const ArchArgs &dm_args = ctx->args;
+    std::string dm = dm_args.options.count("delay-matrix") ? dm_args.options["delay-matrix"].as<std::string>() : "build";
+    if (dm != "off") {
+        if (dm != "build")
+            ctx->settings[ctx->id("xilinx/delayMatrixFile")] = dm;
+        build_delay_matrix();
+    }
+}
+
 void XilinxImpl::prePlace()
 {
     // After apply_holdbufs(): its buffers are LUT cells too.
@@ -1145,13 +1156,7 @@ void XilinxImpl::prePlace()
     // (or absent) builds it fresh.  If the build cannot find enough to measure
     // on a given device it leaves dm_valid false and the formula stands, so an
     // untested device degrades rather than breaks.
-    const ArchArgs &dm_args = ctx->args;
-    std::string dm = dm_args.options.count("delay-matrix") ? dm_args.options["delay-matrix"].as<std::string>() : "build";
-    if (dm != "off") {
-        if (dm != "build")
-            ctx->settings[ctx->id("xilinx/delayMatrixFile")] = dm;
-        build_delay_matrix();
-    }
+    init_delay_matrix();
     apply_loc_constraints();
     init_clock_tree();
     assign_cell_tags();
@@ -1340,6 +1345,7 @@ void XilinxImpl::preRoute()
 {
     if (!cell_tags_set) {
         // We loaded a pre-placed design. Need to set tags and update bel-cell map
+        init_delay_matrix();
         assign_cell_tags();
         index_control_sets();
         cell_tags_set = true;
@@ -1352,6 +1358,18 @@ void XilinxImpl::preRoute()
         }
         if (ctx->nets.count(ctx->id("$PACKER_VCC_NET"))) {
             ctx->nets.at(ctx->id("$PACKER_VCC_NET"))->constant_value = id_VCC;
+        }
+        for (auto &net : ctx->nets) {
+            auto attr = net.second->attrs.find(ctx->id("NEXTPNR_CLKCONSTR"));
+            if (attr == net.second->attrs.end())
+                continue;
+            float period, high, low;
+            if (sscanf(attr->second.as_string().c_str(), "%f %f %f", &period, &high, &low) != 3)
+                continue;
+            auto &c = net.second->clkconstr = std::make_unique<ClockConstraint>();
+            c->period = DelayPair(ctx->getDelayFromNS(period));
+            c->high = DelayPair(ctx->getDelayFromNS(high));
+            c->low = DelayPair(ctx->getDelayFromNS(low));
         }
     }
     find_source_sink_locs();
@@ -2145,18 +2163,6 @@ delay_t XilinxImpl::estimateDelay(WireId src, WireId dst) const
                 tile_xy(ctx->chip_info, pip.tile, dx, dy);
                 break;
             }
-        }
-        for (auto &net : ctx->nets) {
-            auto attr = net.second->attrs.find(ctx->id("NEXTPNR_CLKCONSTR"));
-            if (attr == net.second->attrs.end())
-                continue;
-            float period, high, low;
-            if (sscanf(attr->second.as_string().c_str(), "%f %f %f", &period, &high, &low) != 3)
-                continue;
-            auto &c = net.second->clkconstr = std::make_unique<ClockConstraint>();
-            c->period = DelayPair(ctx->getDelayFromNS(period));
-            c->high = DelayPair(ctx->getDelayFromNS(high));
-            c->low = DelayPair(ctx->getDelayFromNS(low));
         }
     }
 

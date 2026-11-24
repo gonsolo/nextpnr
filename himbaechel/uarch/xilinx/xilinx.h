@@ -318,6 +318,7 @@ struct XilinxImpl : HimbaechelAPI
     }
     int measure_from(WireId src, int sx, int sy, std::vector<delay_t> &out) const;
     std::vector<std::pair<WireId, Loc>> pick_delay_sources(int count) const;
+    void init_delay_matrix();
     void build_delay_matrix();
     delay_t delay_matrix_lookup(int dx, int dy) const;
     void compute_edge_rates();
