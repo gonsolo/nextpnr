@@ -424,6 +424,7 @@ struct Router2
     bool hit_test_pip(BoundingBox &bb, Loc l) { return l.x >= bb.x0 && l.x <= bb.x1 && l.y >= bb.y0 && l.y <= bb.y1; }
 
     double curr_cong_weight, hist_cong_weight, estimate_weight;
+    float cong_crit_floor = 0.05f;
 
     struct ThreadContext
     {
@@ -583,7 +584,9 @@ struct Router2
         auto &nd = nets.at(net->udata);
         float base_cost = cfg.get_base_cost(ctx, wire, pip, crit_weight);
         int overuse = wd.curr_cong;
-        float hist_cost = 1.0f + crit_weight * (wd.hist_cong_cost - 1.0f);
+        // A critical arc sees less congestion, but less and less so as negotiation goes on
+        const float cong_weight = std::max(crit_weight, cong_crit_floor);
+        float hist_cost = 1.0f + cong_weight * (wd.hist_cong_cost - 1.0f);
         float bias_cost = 0;
         float resource_hist_cost = 0.0f;
         float resource_present_cost = 0.0f;
@@ -592,7 +595,7 @@ struct Router2
             overuse -= 1;
             source_uses = nd.wires.at(wire).second;
         }
-        float present_cost = 1.0f + overuse * curr_cong_weight * crit_weight;
+        float present_cost = 1.0f + overuse * curr_cong_weight * cong_weight;
         if (pip != PipId()) {
             Loc pl = ctx->getPipLocation(pip);
             bias_cost = cfg.bias_cost_factor * (base_cost / int(net->users.entries())) *
@@ -602,8 +605,8 @@ struct Router2
         auto resource_key = wire_to_resource.find(wire);
         if (resource_key != wire_to_resource.end()) {
             auto &rd = flat_resources.at(resource_key->second);
-            resource_hist_cost = 1.0f + crit_weight * (rd.hist_cong_cost - 1.0f);
-            resource_present_cost = 1.0f + rd.value_count.size() * curr_cong_weight * crit_weight;
+            resource_hist_cost = 1.0f + cong_weight * (rd.hist_cong_cost - 1.0f);
+            resource_present_cost = 1.0f + rd.value_count.size() * curr_cong_weight * cong_weight;
         }
 
         // Density: cost a wire for sitting in a crowded tile, even when that
@@ -2496,6 +2499,7 @@ struct Router2
         find_all_reserved_wires();
         partition_nets();
         curr_cong_weight = cfg.init_curr_cong_weight;
+        cong_crit_floor = 0.05f;
         hist_cong_weight = cfg.hist_cong_weight;
         ThreadContext st;
         int iter = 1;
@@ -2632,6 +2636,7 @@ struct Router2
             ++iter;
             if (curr_cong_weight < 1e9)
                 curr_cong_weight += cfg.curr_cong_mult;
+            cong_crit_floor = std::min(1.0f, 2 * cong_crit_floor);
         } while (!failed_nets.empty());
 
         // Routing is legal here.  Only now is it meaningful to redistribute:
