@@ -1782,5 +1782,13 @@ void XilinxImpl::pack()
         if (is_regional_buffer && buffer_is_placed)
             packer.constrain_regional_clock_sinks(ci);
     }
+    // Written out with the netlist, so that a placed design can be routed again with --no-pack.
+    for (auto &net : ctx->nets) {
+        const auto &c = net.second->clkconstr;
+        if (c)
+            net.second->attrs[ctx->id("NEXTPNR_CLKCONSTR")] =
+                    stringf("%f %f %f", ctx->getDelayNS(c->period.minDelay()), ctx->getDelayNS(c->high.minDelay()),
+                            ctx->getDelayNS(c->low.minDelay()));
+    }
 }
 NEXTPNR_NAMESPACE_END

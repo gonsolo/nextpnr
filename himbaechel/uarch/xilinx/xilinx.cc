@@ -2146,6 +2146,18 @@ delay_t XilinxImpl::estimateDelay(WireId src, WireId dst) const
                 break;
             }
         }
+        for (auto &net : ctx->nets) {
+            auto attr = net.second->attrs.find(ctx->id("NEXTPNR_CLKCONSTR"));
+            if (attr == net.second->attrs.end())
+                continue;
+            float period, high, low;
+            if (sscanf(attr->second.as_string().c_str(), "%f %f %f", &period, &high, &low) != 3)
+                continue;
+            auto &c = net.second->clkconstr = std::make_unique<ClockConstraint>();
+            c->period = DelayPair(ctx->getDelayFromNS(period));
+            c->high = DelayPair(ctx->getDelayFromNS(high));
+            c->low = DelayPair(ctx->getDelayFromNS(low));
+        }
     }
 
     // A measured offset, when we have one, in place of the tuned formula: it
